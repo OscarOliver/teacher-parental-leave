@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="ca">
+<head>
+  <meta charset="UTF-8" />
+  <title>Calendari Embaràs V2</title>
+  <style>
+        body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+    }
+
+    .controls {
+      margin-bottom: 20px;
+    }
+
+    .totalDays {
+      margin-bottom: 20px;
+    }
+
+    .calendar {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+    }
+
+    .month {
+      border: 1px solid #ccc;
+      padding: 10px;
+    }
+
+    .month h3 {
+      text-align: center;
+      margin: 5px 0 10px;
+    }
+
+    .days {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      text-align: center;
+      font-size: 12px;
+    }
+
+    .day-name {
+      font-weight: bold;
+      margin-bottom: 5px;
+    }
+
+    .day {
+      padding: 5px;
+      margin: 2px;
+      border-radius: 4px;
+      color:#262626;
+    }
+
+    .pregnancy          { background: #9b59b6; color: #f1f1f1; }   /* purple */
+    .birth              { background: #2ecc71; color: #262626; }   /* green */
+    .sick-leave         { background: #b4e9ff; color: #262626; }   /* soft blue */
+    .maternity-6-week   { background: #f1c40f; color: #262626; }   /* yellow */
+    .maternity-11-week  { background: #e67e22; color: #f1f1f1; }   /* orange */
+    .lactation          { background: #e74c3c; color: #f1f1f1; }   /* red */
+    .vacation-pending   { background: #14abeb; color: #262626; }   /* light blue */
+    .vacation           { background: #8b8b8b; color: #f1f1f1; }   /* light grey */
+    .non-school         { background: #8b8b8b; color: #f1f1f1; }   /* light grey */
+
+    .weekend                 { background-image: repeating-linear-gradient(135deg, #ffffff00, #ffffff00 9px, #ffffff88 9px, #ffffff88 10px); }
+    .non-working-border      { border: 2px solid #4f4f4f; padding: 3px; } /* grey */
+    .vacation-pending-border { border: 2px solid #14abeb; padding: 3px; } /* light blue */
+
+    .empty { visibility: hidden; }
+  </style>
+</head>
+<body>
+
+  <div class="controls">
+    <label>
+      Data d'embaràs:
+      <input type="date" id="pregnancyDate" />
+    </label>
+  </div>
+
+  <div id="totalDays" class="totalDays"></div>
+
+  <div id="calendar" class="calendar"></div>
+
+  <script>
+    const input = document.getElementById("pregnancyDate");
+    const calendarEl = document.getElementById("calendar");
+
+    const DayType = Object.freeze({
+      NONE: 'none',
+      PREGNANCY: 'pregnancy',
+      BIRTH: 'birth',
+      SICK_LEAVE: 'sick-leave',
+      MATERNITY_6_WEEK: 'maternity-6-week',
+      MATERNITY_11_WEEK: 'maternity-11-week',
+      LACTATION: 'lactation',
+      VACATION_PENDING: 'vacation-pending',
+      VACATION: 'vacation',
+      HOLIDAY: 'holiday',
+      NON_SCHOOL: 'non-school',
+      WEEKEND: 'weekend'
+    });
+
+    input.addEventListener("change", () => {
+      const pregnancyDate = dateFromKey(input.value);
+      if (pregnancyDate === null) return;
+
+      const calendar = getEmptyCalendarDays(
+        calendarStartDate(pregnancyDate),
+        calendarEndDate(pregnancyDate)
+      );
+
+      fillCalendarWithNonWorkingDays(calendar);
+      fillCalendarWithMaternityLeaveData(calendar, pregnancyDate);
+
+      renderCalendar(calendar);
+
+      renderTotalDays(calendar);
+      
+      console.log(calendar);
+    });
+
+
+    /*** FUNCTIONS ***/
+
+    function calendarStartDate(date) {
+      const startMonth = Math.floor(date.getUTCMonth() / 3) * 3;
+      return utcDate(date.getUTCFullYear(), startMonth, 1);
+    }
+
+    function calendarEndDate(date) {
+      return addDays(addMonths(calendarStartDate(date), 21) , -1); // 21 months later
+    }
+
+    function getEmptyCalendarDays(startDate, endDate) {
+      const emptyCalendar = {};
+
+      console.log("Calendar bounds", keyFromDate(startDate), keyFromDate(endDate));
+
+      for (let date = startDate; date <= endDate; date = addDays(date, 1)) {
+        emptyCalendar[keyFromDate(date)] = [];
+      }
+
+      return emptyCalendar;
+    }
+
+    function fillCalendarWithNonWorkingDays(calendar) {
+      Object.entries(calendar).forEach(([dateKey, dayTypes]) => {
+        const date = dateFromKey(dateKey);
+
+        if (isWeekend(date)) {
+          dayTypes.push(DayType.WEEKEND);
+        }
+        
+        if (isHoliday(date)) {
+          dayTypes.push(DayType.HOLIDAY);
+        }
+        
+        if (isVacation(date)) {
+          dayTypes.push(DayType.VACATION);
+        }
+        else if (isNonSchool(date)) {
+          dayTypes.push(DayType.NON_SCHOOL);
+        }
+      });
+    }
+
+    function fillCalendarWithMaternityLeaveData(calendar, pregnancyDate) {
+      markDay(calendar, pregnancyDate, DayType.PREGNANCY);
+      console.log("Pregnancy:", keyFromDate(pregnancyDate));
+
+      const birthDate = addDays(pregnancyDate, 266); // 38 weeks average
+      markDay(calendar, birthDate, DayType.BIRTH);
+      console.log("Birth:", keyFromDate(birthDate));
+
+      const sickLeaveStartDate = addDays(birthDate, -18 * 7); // 18 weeks before birth (~4 months)
+      const sickLeaveEndDate = addDays(birthDate, -1);
+      fillCalendarPeriod(calendar, sickLeaveStartDate, sickLeaveEndDate, DayType.SICK_LEAVE);
+      console.log("Sick Leave:", keyFromDate(sickLeaveStartDate), keyFromDate(sickLeaveEndDate));
+
+      const maternity6WeekStartDate = addDays(birthDate, 1);
+      const maternity6WeekEndDate = addDays(birthDate, 6 * 7);
+      fillCalendarPeriod(calendar, maternity6WeekStartDate, maternity6WeekEndDate, DayType.MATERNITY_6_WEEK);
+      console.log("Maternity 6 weeks:", keyFromDate(maternity6WeekStartDate), keyFromDate(maternity6WeekEndDate));
+
+      const vacationPendingDays = countVacationPendingDays(calendar);
+      const vacationPendingStartDate = addDays(maternity6WeekEndDate, 1);
+      const vacationPendingEndDate = 
+        fillCalendarWithVactionPendingDays(calendar, vacationPendingStartDate, vacationPendingDays);
+      console.log("Vacation pending:",
+        vacationPendingDays > 0 ?
+        keyFromDate(vacationPendingStartDate) + " " + keyFromDate(vacationPendingEndDate) + " (" + vacationPendingDays + " days)" :
+        "0 days");
+
+      const maternity11WeekStartDate = addDays(vacationPendingEndDate, 1);
+      const maternity11WeekEndDate = 
+        fillCalendarWithMaternity11Week(calendar, maternity11WeekStartDate);
+      console.log("Maternity 11 weeks:", keyFromDate(maternity11WeekStartDate), keyFromDate(maternity11WeekEndDate));
+
+      const lactancyDays = countLactancyDays(addDays(maternity11WeekEndDate, 1), addDays(birthDate, 365));
+      const lactancyStartDate = addDays(maternity11WeekEndDate, 1);
+      const lactancyEndDate = fillCalendarWithLactancyDays(calendar, lactancyStartDate, lactancyDays);
+      console.log("Lactancy:", keyFromDate(lactancyStartDate), keyFromDate(lactancyEndDate), "(" + lactancyDays + " days)");
+    }
+
+    // Days outside the rendered window are ignored instead of failing.
+    function markDay(calendar, date, dayType) {
+      const dayTypes = calendar[keyFromDate(date)];
+      if (!dayTypes) {
+        return false;
+      }
+
+      dayTypes.push(dayType);
+      return true;
+    }
+
+    function fillCalendarPeriod(calendar, startDate, endDate, dayType) {
+      for (let date = startDate; date <= endDate; date = addDays(date, 1)) {
+        markDay(calendar, date, dayType);
+      }
+    }
+
+    function fillCalendarWithMaternity11Week(calendar, startDate, pendingWeeks = 11) {
+      if (pendingWeeks <= 0) {
+        return addDays(startDate, -1);
+      }
+
+      if (!pendingWeeks) {
+        pendingWeeks = 11;
+      }
+
+      // Find the first working day to start counting the 11 weeks.
+      if (isWeekend(startDate) || isVacation(startDate) || isHoliday(startDate) || isNonSchool(startDate)) {
+        startDate = addDays(startDate, 1);
+        return fillCalendarWithMaternity11Week(calendar, startDate, pendingWeeks);
+      }
+
+      const endDate = addDays(startDate, 6);
+      fillCalendarPeriod(calendar, startDate, endDate, DayType.MATERNITY_11_WEEK);
+      
+      pendingWeeks--;
+      return fillCalendarWithMaternity11Week(calendar, addDays(endDate, 1), pendingWeeks);
+    }
+
+    function fillCalendarWithVactionPendingDays(calendar, startDate, vactionPendingDays) {
+      let daysAdded = 0;
+
+      let date;
+      for (date = startDate; daysAdded < vactionPendingDays; date = addDays(date, 1)) {
+        if (isWeekend(date) || isVacation(date) || isHoliday(date) || isNonSchool(date)) {
+          continue;
+        }
+
+        if (!markDay(calendar, date, DayType.VACATION_PENDING)) {
+          break; // ran past the end of the calendar
+        }
+
+        daysAdded++;
+      }
+
+      return addDays(date, -1);
+    }
+
+    function fillCalendarWithLactancyDays(calendar, startDate, lactancyDays) {
+      let daysAdded = 0;
+
+      let date;
+      for (date = startDate; daysAdded < lactancyDays; date = addDays(date, 1)) {
+        if (isWeekend(date) || isVacation(date) || isHoliday(date) || isNonSchool(date)) {
+          continue;
+        }
+
+        if (!markDay(calendar, date, DayType.LACTATION)) {
+          break; // ran past the end of the calendar
+        }
+
+        daysAdded++;
+      }
+
+      return addDays(date, -1);
+    }
+
+    function countVacationPendingDays(calendar) {
+      let pendingDays = 0;
+      Object.values(calendar).forEach(dayTypes => {
+        if ((dayTypes.includes(DayType.SICK_LEAVE) || dayTypes.includes(DayType.MATERNITY_6_WEEK)) &&
+            dayTypes.includes(DayType.VACATION) &&
+            !dayTypes.includes(DayType.WEEKEND) &&
+            !dayTypes.includes(DayType.HOLIDAY)) {
+          pendingDays++;
+        }
+      });
+      return pendingDays;
+    }
+
+    function countLactancyDays(startDate, endDate) {
+      let workDays = 0;
+
+      for (let date = startDate; date <= endDate; date = addDays(date, 1)) {
+        if (!isWeekend(date) && !isVacation(date) && !isHoliday(date) && !isNonSchool(date)) {
+          workDays++;
+        }
+      }
+
+      return Math.ceil(workDays / 7.5);
+    }
+
+    /*** CALENDAR RENDERING FUNCTIONS ***/
+
+    function renderCalendar(calendar) {
+      calendarEl.innerHTML = "";
+
+      const dateKeys = Object.keys(calendar);
+      if (dateKeys.length === 0) return;
+
+      const firstMonth = startOfMonth(dateFromKey(dateKeys[0]));
+      const lastMonth = startOfMonth(dateFromKey(dateKeys[dateKeys.length - 1]));
+
+      for (let month = firstMonth; month <= lastMonth; month = addMonths(month, 1)) {
+        calendarEl.appendChild(renderMonth(month, calendar));
+      }
+    }
+
+    function renderMonth(monthDate, calendar) {
+      const monthEl = document.createElement("div");
+      monthEl.className = "month";
+
+      const title = document.createElement("h3");
+      title.textContent = monthDate.toLocaleString("ca-ES", { month: "long", year: "numeric", timeZone: "UTC" });
+      monthEl.appendChild(title);
+
+      const daysEl = document.createElement("div");
+      daysEl.className = "days";
+
+      ["Dl", "Dm", "Dc", "Dj", "Dv", "Ds", "Dg"].forEach(d => {
+        const el = document.createElement("div");
+        el.className = "day-name";
+        el.textContent = d;
+        daysEl.appendChild(el);
+      });
+
+      const year = monthDate.getUTCFullYear();
+      const month = monthDate.getUTCMonth();
+      const startOffset = (monthDate.getUTCDay() + 6) % 7;
+
+      for (let i = 0; i < startOffset; i++) {
+        const empty = document.createElement("div");
+        empty.className = "day empty";
+        daysEl.appendChild(empty);
+      }
+
+      const totalDays = daysInMonth(year, month);
+
+      for (let day = 1; day <= totalDays; day++) {
+        const dayEl = document.createElement("div");
+        dayEl.className = "day";
+        dayEl.textContent = day;
+
+        const currentDateKey = keyFromDate(utcDate(year, month, day));
+        applyMarks(dayEl, (calendar[currentDateKey] ?? []));
+        daysEl.appendChild(dayEl);
+      }
+
+      monthEl.appendChild(daysEl);
+      return monthEl;
+    }
+
+    function applyMarks(el, dateTypes) {
+      const isNonWorkingDay =
+          dateTypes.includes(DayType.VACATION) ||
+          dateTypes.includes(DayType.HOLIDAY) ||
+          dateTypes.includes(DayType.NON_SCHOOL);
+
+      if (dateTypes.includes(DayType.PREGNANCY)) {
+        el.classList.add(DayType.PREGNANCY);
+        if (isNonWorkingDay) {
+          el.classList.add("non-working-border");
+        }
+      }
+      else if (dateTypes.includes(DayType.BIRTH)) {
+        el.classList.add(DayType.BIRTH);
+        if (isNonWorkingDay) {
+          el.classList.add("non-working-border");
+        }
+      }
+      else if (dateTypes.includes(DayType.MATERNITY_6_WEEK)) {
+        el.classList.add(DayType.MATERNITY_6_WEEK);
+        if (dateTypes.includes(DayType.VACATION)) {
+          el.classList.add("vacation-pending-border");
+        }
+        else if (isNonWorkingDay) {
+          el.classList.add("non-working-border");
+        }
+      }
+      else if (dateTypes.includes(DayType.MATERNITY_11_WEEK)) {
+        el.classList.add(DayType.MATERNITY_11_WEEK);
+        if (isNonWorkingDay) {
+          el.classList.add("non-working-border");
+        }
+      }
+      else if (dateTypes.includes(DayType.LACTATION)) {
+        el.classList.add(DayType.LACTATION);
+        if (isNonWorkingDay) {
+          el.classList.add("non-working-border");
+        }
+      }
+      else if (dateTypes.includes(DayType.SICK_LEAVE)) {
+        el.classList.add(DayType.SICK_LEAVE);
+        if (dateTypes.includes(DayType.VACATION)) {
+          el.classList.add("vacation-pending-border");
+        }
+        else if (isNonWorkingDay) {
+          el.classList.add("non-working-border");
+        }
+      }
+      else if (dateTypes.includes(DayType.VACATION_PENDING)) {
+        el.classList.add(DayType.VACATION_PENDING);
+        if (isNonWorkingDay) {
+          el.classList.add("non-working-border");
+        }
+      }
+      else if (isNonWorkingDay) {
+        el.classList.add(DayType.VACATION);
+      }
+
+      if (dateTypes.includes(DayType.WEEKEND)) {
+        el.classList.add(DayType.WEEKEND);
+      }
+    }
+
+    function renderTotalDays(calendar) {
+      let birthDate = null;
+      let endDate = null;
+      Object.entries(calendar).forEach(([dateKey, dayTypes]) => {
+        if (dayTypes.includes(DayType.BIRTH) && birthDate === null) {
+          birthDate = dateFromKey(dateKey);
+        }
+
+        if (dayTypes.includes(DayType.MATERNITY_11_WEEK) || dayTypes.includes(DayType.LACTATION)) {
+          endDate = dateFromKey(dateKey);
+        }
+      });
+
+      const totalDays = birthDate === null || endDate === null
+        ? 0
+        : daysBetween(birthDate, endDate) + 1; // +1 to include the last day
+
+      console.log("Total days of leave:", totalDays, keyFromDate(birthDate), keyFromDate(endDate));
+
+      document.getElementById("totalDays").textContent = `Total dies de baixa: ${totalDays}`;
+    }
+
+    /*** AUX FUNCTIONS ***/
+
+    /*
+     * Every date is a Date pinned to UTC midnight and only ever read or built
+     * through Date.UTC / getUTC*, so the local timezone and DST cannot shift a
+     * day. Never use the local accessors (getDate, setDate, getMonth, getDay,
+     * getFullYear, new Date(y, m, d)) in this file.
+     */
+
+    const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+    const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+    function utcDate(year, month, day) {
+      return new Date(Date.UTC(year, month, day));
+    }
+
+    function keyFromDate(date) {
+      return date.toISOString().slice(0, 10);
+    }
+
+    // Returns null for anything that is not a real YYYY-MM-DD date.
+    function dateFromKey(dateKey) {
+      if (!DATE_KEY_PATTERN.test(dateKey ?? "")) {
+        return null;
+      }
+
+      const date = new Date(dateKey + "T00:00:00.000Z");
+      if (isNaN(date.getTime()) || keyFromDate(date) !== dateKey) {
+        return null;
+      }
+
+      return date;
+    }
+
+    // Safe in UTC: a UTC day is always exactly MS_PER_DAY long.
+    function addDays(date, days) {
+      return new Date(date.getTime() + days * MS_PER_DAY);
+    }
+
+    function daysBetween(fromDate, toDate) {
+      return Math.round((toDate.getTime() - fromDate.getTime()) / MS_PER_DAY);
+    }
+
+    function addMonths(date, months) {
+      const year = date.getUTCFullYear();
+      const month = date.getUTCMonth() + months;
+      const day = Math.min(date.getUTCDate(), daysInMonth(year, month));
+      return utcDate(year, month, day);
+    }
+
+    // Day 0 of the next month is the last day of this one.
+    function daysInMonth(year, month) {
+      return utcDate(year, month + 1, 0).getUTCDate();
+    }
+
+    function startOfMonth(date) {
+      return utcDate(date.getUTCFullYear(), date.getUTCMonth(), 1);
+    }
+
+    function isSameDate(a, b) {
+      return a.getTime() === b.getTime();
+    }
+
+    function isWeekend(date) {
+      const weekday = date.getUTCDay();
+      return weekday === 0 || weekday === 6;
+    }
+
+    function isHoliday(date) {
+      const year = date.getUTCFullYear();
+
+      // Labor day, Sant Joan and Assumption Mary
+      const laborDay = utcDate(year, 4, 1);
+      const stJoan = utcDate(year, 5, 24);
+      const assumption = utcDate(year, 7, 15);
+      if (isSameDate(date, laborDay) ||
+          isSameDate(date, stJoan) ||
+          isSameDate(date, assumption)) {
+        return true;
+      }
+
+      // Diada Catalonia, Hispanidad and All Saints' Day
+      const diada = utcDate(year, 8, 11);
+      const hispanidad = utcDate(year, 9, 12);
+      const allSaints = utcDate(year, 10, 1);
+      if (isSameDate(date, diada) ||
+          isSameDate(date, hispanidad) ||
+          isSameDate(date, allSaints)) {
+        return true;
+      }
+
+      // December long weekend
+      const spanishConstitution = utcDate(year, 11, 6);
+      const inmaculada = utcDate(year, 11, 8);
+      if (isSameDate(date, spanishConstitution) || isSameDate(date, inmaculada)) {
+        return true;
+      }
+
+      // Christmas holidays
+      const christmas = utcDate(year, 11, 25);
+      const stEsteve = utcDate(year, 11, 26);
+      const newYear = utcDate(year, 0, 1);
+      const kings = utcDate(year, 0, 6);
+      if (isSameDate(date, christmas) ||
+          isSameDate(date, stEsteve) ||
+          isSameDate(date, newYear) ||
+          isSameDate(date, kings)) {
+        return true;
+      }
+
+      // Easter holidays (Easter Friday and Monday, and Whit Monday)
+      const easterSunday = getEasterSunday(year);
+      const easterFriday = addDays(easterSunday, -2);
+      const easterMonday = addDays(easterSunday, +1);
+      const whitMonday = addDays(easterSunday, +50);
+      if (isSameDate(date, easterFriday) ||
+          isSameDate(date, easterMonday) ||
+          isSameDate(date, whitMonday)) {
+        return true;
+      }
+
+      return false;
+    }
+
+    function isVacation(date) {
+      // August without holidays and weekends
+      return date.getUTCMonth() === 7 && !isWeekend(date) && !isHoliday(date);
+    }
+
+    function isNonSchool(date) {
+      // July
+      if (date.getUTCMonth() === 6) {
+        return !isWeekend(date);
+      }
+
+      const year = date.getUTCFullYear();
+
+      // Pont de desembre (December 7th) if it is not a weekend
+      if (isSameDate(date, utcDate(year, 11, 7))) {
+        return !isWeekend(date);
+      }
+
+      // Christmas period without holidays and weekends
+      if (date >= utcDate(year, 11, 22) || date <= utcDate(year, 0, 7)) {
+        return !isHoliday(date) && !isWeekend(date);
+      }
+
+      // Easter period without holidays
+      const easterSunday = getEasterSunday(year);
+      const easterMonday = addDays(easterSunday, -6);
+      const easterThursday = addDays(easterSunday, -3);
+      if (date >= easterMonday && date <= easterThursday) {
+        return true;
+      }
+
+      return false;
+    }
+
+    function getEasterSunday(year) {
+        const a = year % 19;
+        const b = Math.floor(year / 100);
+        const c = year % 100;
+        const d = Math.floor(b / 4);
+        const e = b % 4;
+        const f = Math.floor((b + 8) / 25);
+        const g = Math.floor((b - f + 1) / 3);
+        const h = (19 * a + b - d - g + 15) % 30;
+        const i = Math.floor(c / 4);
+        const k = c % 4;
+        const l = (32 + 2 * e + 2 * i - h - k) % 7;
+        const m = Math.floor((a + 11 * h + 22 * l) / 451);
+        
+        const month = Math.floor((h + l - 7 * m + 114) / 31);
+        const day = ((h + l - 7 * m + 114) % 31) + 1;
+
+        return utcDate(year, month - 1, day);
+    }
+  </script>
+
+</body>
+</html>
